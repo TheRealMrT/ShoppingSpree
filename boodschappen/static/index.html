@@ -30,51 +30,64 @@
       <div class="section-header">
         <h2>Recepten</h2>
         <div style="display:flex;gap:.4rem;align-items:center">
-          <!-- Import dropdown -->
-          <div class="import-dropdown" id="import-dropdown">
-            <button class="btn btn-outline btn-sm" id="btn-import-dropdown">📥 Importeren ▾</button>
-            <div class="import-dropdown-menu" id="import-dropdown-menu">
-              <button class="import-menu-item" id="menu-import-foto">📷 Foto (enkel)</button>
-              <button class="import-menu-item" id="menu-import-batch">📁 Batch (meerdere foto's)</button>
-              <button class="import-menu-item" id="menu-import-tekst">📝 Tekst plakken</button>
-              <button class="import-menu-item" id="menu-import-url">🔗 URL importeren</button>
-            </div>
-          </div>
+          <button class="btn btn-outline btn-sm" id="btn-open-collector">📥 Importeren</button>
           <button class="btn btn-primary btn-sm" id="btn-nieuw-recept">+ Nieuw recept</button>
         </div>
       </div>
 
-      <!-- Hidden file inputs -->
-      <input type="file" id="foto-input"  accept="image/*" capture="environment" style="display:none">
-      <input type="file" id="batch-input" accept="image/*" multiple style="display:none">
+      <!-- Hidden file input for collector photos -->
+      <input type="file" id="collector-photo-input" accept="image/*" multiple style="display:none">
 
-      <!-- Text import panel -->
-      <div id="text-import-panel" class="import-panel" style="display:none">
+      <!-- Collector / staging area panel -->
+      <div id="collector-panel" class="import-panel" style="display:none">
         <div class="import-panel-header">
-          <strong>📝 Tekst importeren</strong>
-          <button class="btn-icon" id="btn-close-text-panel">✕</button>
+          <strong>📥 Recept importeren</strong>
+          <button class="btn-icon" id="btn-close-collector">✕</button>
         </div>
-        <div class="form-group">
-          <label for="text-import-area">Plak je recept hieronder</label>
-          <textarea id="text-import-area" rows="6" placeholder="Kopieer het recept en plak hier (bijv. uit een Word-document, e-mail of boek)…"></textarea>
+
+        <!-- Add actions row -->
+        <div class="collector-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-collector-add-photo">📷 Foto's</button>
+          <button class="btn btn-secondary btn-sm" id="btn-collector-add-text">📝 Tekst</button>
+          <button class="btn btn-secondary btn-sm" id="btn-collector-add-url">🔗 URL</button>
         </div>
-        <button class="btn btn-primary btn-sm" id="btn-import-text">Importeer recept</button>
+
+        <!-- Inline text input (hidden until "Tekst" clicked) -->
+        <div id="collector-text-input" class="collector-input-area" style="display:none">
+          <textarea id="collector-text-area" rows="3" placeholder="Plak recepttekst en klik 'Toevoegen'…"></textarea>
+          <button class="btn btn-primary btn-sm" id="btn-collector-confirm-text">+ Toevoegen</button>
+        </div>
+
+        <!-- Inline URL input (hidden until "URL" clicked) -->
+        <div id="collector-url-input" class="collector-input-area" style="display:none">
+          <div style="display:flex;gap:.4rem">
+            <input type="url" id="collector-url-field" placeholder="https://www.allerhande.nl/recept/…" style="flex:1">
+            <button class="btn btn-primary btn-sm" id="btn-collector-confirm-url">+ Toevoegen</button>
+          </div>
+        </div>
+
+        <!-- Collected items list -->
+        <div id="collector-items" class="collector-items">
+          <p class="collector-empty" id="collector-empty-msg">
+            Voeg foto's, tekst of een URL toe om te beginnen.
+          </p>
+        </div>
+
+        <!-- Batch mode checkbox (only shown with 2+ photos, no text/URL) -->
+        <div class="collector-options" id="collector-options" style="display:none">
+          <label class="collector-option-label">
+            <input type="checkbox" id="collector-batch-mode"> Elke foto als apart recept opslaan (batch)
+          </label>
+        </div>
+
+        <!-- Process / clear buttons -->
+        <div class="collector-footer" id="collector-footer" style="display:none">
+          <button class="btn btn-primary" id="btn-collector-process">Verwerken</button>
+          <button class="btn btn-secondary btn-sm" id="btn-collector-clear">Leegmaken</button>
+        </div>
       </div>
 
-      <!-- URL import panel -->
-      <div id="url-import-panel" class="import-panel" style="display:none">
-        <div class="import-panel-header">
-          <strong>🔗 URL importeren</strong>
-          <button class="btn-icon" id="btn-close-url-panel">✕</button>
-        </div>
-        <div class="form-group">
-          <label for="url-import-input">Receptpagina URL</label>
-          <input type="url" id="url-import-input" placeholder="https://www.allerhande.nl/recept/…">
-        </div>
-        <button class="btn btn-primary btn-sm" id="btn-import-url">Importeer recept</button>
-      </div>
-
-      <!-- Batch progress panel -->
+      <!-- Batch progress panel (still used for batch mode) -->
       <div id="batch-panel" class="import-panel" style="display:none">
         <div class="import-panel-header">
           <strong>📁 Batch importeren</strong>

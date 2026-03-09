@@ -10,7 +10,7 @@ import re
 from typing import List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -772,6 +772,156 @@ async def import_recipe_url(data: UrlImportRequest):
         result["bron"] = url
     logger.info("Model fallback result: '%s', %d ingredients",
                 result.get("naam"), len(result.get("ingredienten", [])))
+    return result
+
+
+# ── Unified import (collector) ────────────────────────────────────
+
+@router.post("/recipes/import-unified")
+async def import_recipe_unified(
+    photos: list[UploadFile] = File(default=[]),
+    texts: str = Form(default="[]"),
+    url: str = Form(default=""),
+):
+    """
+    Unified recipe import: combine multiple photos, text snippets,
+    and optionally a URL into one recipe extraction.
+
+    Pipeline: URL (JSON-LD fast path) → photo OCR (concurrent) → combine all text → extract.
+    """
+    import json as json_mod
+
+    text_snippets: list[str] = json_mod.loads(texts) if texts else []
+    url = url.strip() if url else ""
+
+    logger.info(
+        "Unified import: %d photos, %d text snippets, URL=%s",
+        len(photos), len(text_snippets), url or "(none)",
+    )
+
+    if not photos and not text_snippets and not url:
+        raise HTTPException(status_code=400, detail="Geen bronnen meegegeven.")
+
+    collected_texts: list[str] = []
+    jsonld_recipe = None
+    dish_photo_result = None
+
+    # ── Step 1: URL processing (fastest path — JSON-LD may give everything) ──
+    if url:
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+
+        await asyncio.sleep(1.5)  # polite delay
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=20, follow_redirects=True, headers=URL_HEADERS
+            ) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+
+            html = resp.text
+            logger.info("Unified: fetched %d bytes from %s", len(html), url)
+
+            # Try JSON-LD first
+            jsonld_recipe = _extract_jsonld(html)
+            if jsonld_recipe:
+                logger.info("Unified: JSON-LD recipe found from URL")
+                # If we ONLY have a URL and JSON-LD succeeded → return immediately
+                if not photos and not text_snippets:
+                    return jsonld_recipe
+
+            # Otherwise collect page text as supplementary content
+            clean = _clean_html(html)
+            if len(clean) >= 200:
+                collected_texts.append(f"[Tekst van URL {url}]:\n{clean[:4000]}")
+
+        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as exc:
+            logger.warning("Unified: URL fetch failed: %s", exc)
+            # Don't fail the whole request — we may have photos/text
+            if not photos and not text_snippets:
+                raise HTTPException(status_code=502, detail=f"URL ophalen mislukt: {exc}")
+
+    # ── Step 2: Photo OCR (concurrent for speed) ─────────────────────
+    if photos:
+        photo_data: list[tuple[bytes, str]] = []
+        for photo in photos:
+            image_bytes = await photo.read()
+            if not image_bytes:
+                continue
+            b64 = base64.b64encode(image_bytes).decode()
+            photo_data.append((image_bytes, b64))
+
+        if photo_data:
+            # OCR all photos concurrently
+            ocr_tasks = [
+                _call_ollama_vision(PHOTO_OCR_PROMPT, b64)
+                for _, b64 in photo_data
+            ]
+            ocr_results = await asyncio.gather(*ocr_tasks, return_exceptions=True)
+
+            for i, result in enumerate(ocr_results):
+                if isinstance(result, Exception):
+                    logger.warning("Unified: OCR failed for photo %d: %s", i + 1, result)
+                    continue
+                if result and len(result) >= 20:
+                    collected_texts.append(f"[OCR foto {i + 1}]:\n{result}")
+                    logger.info("Unified: photo %d OCR → %d chars", i + 1, len(result))
+
+            # Try to extract dish photo from the first photo
+            try:
+                dish_photo_result = await _try_extract_dish_photo(
+                    photo_data[0][0], photo_data[0][1]
+                )
+            except Exception as exc:
+                logger.warning("Unified: dish photo extraction failed: %s", exc)
+
+    # ── Step 3: Add pasted text snippets ─────────────────────────────
+    for i, snippet in enumerate(text_snippets):
+        if snippet and snippet.strip():
+            collected_texts.append(f"[Geplakte tekst {i + 1}]:\n{snippet.strip()}")
+
+    # ── Step 4: Combine and extract ──────────────────────────────────
+    if not collected_texts and not jsonld_recipe:
+        raise HTTPException(
+            status_code=422,
+            detail="Kon geen bruikbare tekst vinden in de aangeleverde bronnen.",
+        )
+
+    if jsonld_recipe and not collected_texts:
+        # Pure JSON-LD — return as-is
+        result = jsonld_recipe
+    elif jsonld_recipe and collected_texts:
+        # JSON-LD base + extra text from photos/snippets → enrich
+        combined = "\n\n".join(collected_texts)
+        hint = (
+            f"Er is al een basisrecept uit een URL: '{jsonld_recipe.get('naam', '?')}' "
+            f"met {len(jsonld_recipe.get('ingredienten', []))} ingrediënten. "
+            f"Onderstaande tekst bevat mogelijk aanvullende of betere informatie. "
+            f"Combineer alles tot één compleet recept.\n\n"
+        )
+        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + hint + combined[:8000])
+        result = _parse_recipe_json(raw)
+        if not result.get("bron") and url:
+            result["bron"] = url
+    else:
+        # No JSON-LD — pure text extraction
+        combined = "\n\n".join(collected_texts)
+        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + combined[:8000])
+        result = _parse_recipe_json(raw)
+        if url and not result.get("bron"):
+            result["bron"] = url
+
+    # ── Step 5: Attach dish photo ────────────────────────────────────
+    if dish_photo_result:
+        result["_dish_photo"] = base64.b64encode(dish_photo_result[0]).decode()
+        result["_dish_photo_ext"] = dish_photo_result[1]
+        logger.info("Unified: dish photo attached (%d bytes)", len(dish_photo_result[0]))
+
+    logger.info(
+        "Unified import result: '%s', %d ingredients",
+        result.get("naam"), len(result.get("ingredienten", [])),
+    )
     return result
 
 

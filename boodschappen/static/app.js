@@ -49,6 +49,7 @@ const state = {
     addedStaples: false,
   },
   pendingPhoto: null,   // File object to upload after recipe save
+  collector: { items: [] },  // [{type:'photo'|'text'|'url', data:File|string, preview:string}]
 };
 
 // ── Filter state ─────────────────────────────────────────────────
@@ -666,25 +667,150 @@ function hideImportLoader() {
   if (overlay) overlay.style.display = 'none';
 }
 
-// ── Import dropdown ───────────────────────────────────────────────
+// ── Collector / staging area ──────────────────────────────────────
 
-function toggleImportDropdown() {
-  $('#import-dropdown-menu').classList.toggle('open');
+function openCollector() {
+  $('#collector-panel').style.display = 'block';
+  $('#collector-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  renderCollectorItems();
 }
 
-function closeImportDropdown() {
-  $('#import-dropdown-menu').classList.remove('open');
+function closeCollector() {
+  $('#collector-panel').style.display = 'none';
 }
 
-// ── Photo import (single) ─────────────────────────────────────────
+function addCollectorPhotos(files) {
+  for (const file of files) {
+    const preview = URL.createObjectURL(file);
+    state.collector.items.push({ type: 'photo', data: file, preview });
+  }
+  renderCollectorItems();
+}
 
-async function importRecipePhoto(file) {
+function addCollectorText(text) {
+  if (!text.trim()) return;
+  state.collector.items.push({
+    type: 'text',
+    data: text.trim(),
+    preview: text.trim().slice(0, 80) + (text.trim().length > 80 ? '…' : ''),
+  });
+  renderCollectorItems();
+}
+
+function addCollectorUrl(url) {
+  if (!url.trim()) return;
+  // Only allow one URL at a time — replace existing
+  const existing = state.collector.items.findIndex(i => i.type === 'url');
+  if (existing >= 0) {
+    state.collector.items[existing].data = url.trim();
+    state.collector.items[existing].preview = url.trim();
+  } else {
+    state.collector.items.push({ type: 'url', data: url.trim(), preview: url.trim() });
+  }
+  renderCollectorItems();
+}
+
+function removeCollectorItem(index) {
+  const item = state.collector.items[index];
+  if (item && item.type === 'photo' && item.preview) {
+    URL.revokeObjectURL(item.preview);
+  }
+  state.collector.items.splice(index, 1);
+  renderCollectorItems();
+}
+
+function clearCollector() {
+  state.collector.items.forEach(item => {
+    if (item.type === 'photo' && item.preview) URL.revokeObjectURL(item.preview);
+  });
+  state.collector.items = [];
+  renderCollectorItems();
+}
+
+function renderCollectorItems() {
+  const container = $('#collector-items');
+  const items = state.collector.items;
+  const hasItems = items.length > 0;
+  const photoCount = items.filter(i => i.type === 'photo').length;
+  const hasNonPhoto = items.some(i => i.type !== 'photo');
+
+  // Show/hide empty message, footer, batch option
+  $('#collector-empty-msg').style.display = hasItems ? 'none' : '';
+  $('#collector-footer').style.display = hasItems ? 'flex' : 'none';
+  $('#collector-options').style.display = (photoCount >= 2 && !hasNonPhoto) ? '' : 'none';
+  // Uncheck batch when hidden
+  if (photoCount < 2 || hasNonPhoto) {
+    const cb = $('#collector-batch-mode');
+    if (cb) cb.checked = false;
+  }
+
+  // Build items HTML
+  const html = items.map((item, i) => {
+    let icon, content;
+    if (item.type === 'photo') {
+      icon = `<img src="${item.preview}" class="collector-thumb" alt="Foto">`;
+      content = `<span class="collector-item-name">${esc(item.data.name)}</span>`;
+    } else if (item.type === 'text') {
+      icon = '<span class="collector-item-icon">📝</span>';
+      content = `<span class="collector-item-preview">${esc(item.preview)}</span>`;
+    } else {
+      icon = '<span class="collector-item-icon">🔗</span>';
+      content = `<span class="collector-item-preview">${esc(item.preview)}</span>`;
+    }
+    return `
+      <div class="collector-item">
+        ${icon}
+        ${content}
+        <button class="btn-icon collector-remove" data-idx="${i}" title="Verwijderen">✕</button>
+      </div>`;
+  }).join('');
+
+  // Replace only item nodes (keep the empty msg)
+  container.querySelectorAll('.collector-item').forEach(el => el.remove());
+  container.insertAdjacentHTML('beforeend', html);
+
+  // Bind remove buttons via delegation
+  container.querySelectorAll('.collector-remove').forEach(btn => {
+    btn.onclick = () => removeCollectorItem(parseInt(btn.dataset.idx));
+  });
+}
+
+async function processCollector() {
+  const items = state.collector.items;
+  if (!items.length) { toast('Voeg eerst iets toe', 'error'); return; }
+
+  // Check for batch mode
+  const batchCb = $('#collector-batch-mode');
+  const batchMode = batchCb && batchCb.checked
+    && items.every(i => i.type === 'photo')
+    && items.filter(i => i.type === 'photo').length >= 2;
+
+  if (batchMode) {
+    const files = items.filter(i => i.type === 'photo').map(i => i.data);
+    clearCollector();
+    closeCollector();
+    startBatchImport(files);
+    return;
+  }
+
+  // Unified processing
   const formData = new FormData();
-  formData.append('file', file);
 
-  showImportLoader('Foto analyseren…', 'Tekst lezen → recept herkennen');
+  // Append photos
+  const photos = items.filter(i => i.type === 'photo');
+  photos.forEach(p => formData.append('photos', p.data));
+
+  // Append text snippets as JSON array
+  const texts = items.filter(i => i.type === 'text').map(i => i.data);
+  formData.append('texts', JSON.stringify(texts));
+
+  // Append URL (at most one)
+  const urlItem = items.find(i => i.type === 'url');
+  if (urlItem) formData.append('url', urlItem.data);
+
+  showImportLoader('Recept verwerken…', 'Alle bronnen worden gecombineerd…');
   try {
-    const res = await fetch(`${API}/recipes/import-photo`, {
+    const res = await fetch(`${API}/recipes/import-unified`, {
       method: 'POST',
       body: formData,
     });
@@ -693,7 +819,7 @@ async function importRecipePhoto(file) {
 
     const n = fillRecipeForm(data);
 
-    // If the backend extracted a dish photo from the cookbook page, use it
+    // Handle dish photo if extracted from cookbook page
     if (data._dish_photo) {
       const byteStr = atob(data._dish_photo);
       const bytes = new Uint8Array(byteStr.length);
@@ -701,22 +827,23 @@ async function importRecipePhoto(file) {
       const ext = data._dish_photo_ext || '.jpg';
       const mime = ext === '.png' ? 'image/png' : 'image/jpeg';
       state.pendingPhoto = new File([bytes], `dish${ext}`, { type: mime });
-      // Show preview
       const preview = $('#recipe-photo-preview');
       const img = $('#recipe-photo-img');
       img.src = URL.createObjectURL(state.pendingPhoto);
       preview.style.display = 'flex';
-    } else {
-      // Keep original file so it gets uploaded when recipe is saved
-      state.pendingPhoto = file;
+    } else if (photos.length === 1) {
+      // Use original photo as recipe photo
+      state.pendingPhoto = photos[0].data;
     }
+
     toast(`✅ ${n} ingrediënten ingelezen — controleer en sla op`, 'success');
+    clearCollector();
+    closeCollector();
     $('#recipe-form-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
-    toast('📷 Importeren mislukt: ' + e.message, 'error');
+    toast('Importeren mislukt: ' + e.message, 'error');
   } finally {
     hideImportLoader();
-    $('#foto-input').value = '';
   }
 }
 
@@ -795,7 +922,7 @@ async function startBatchImport(files) {
   }
 
   $('#btn-stop-batch').style.display = 'none';
-  $('#batch-input').value = '';
+  $('#collector-photo-input').value = '';
 
   const summary = batchCancelled
     ? `Gestopt. ${saved} opgeslagen, ${failed} mislukt.`
@@ -804,47 +931,7 @@ async function startBatchImport(files) {
   await loadRecipes();
 }
 
-// ── Text import ───────────────────────────────────────────────────
-
-async function importText() {
-  const text = $('#text-import-area').value.trim();
-  if (!text) { toast('Plak eerst een recept', 'error'); return; }
-
-  showImportLoader('Tekst analyseren…', 'Recept wordt herkend…');
-  try {
-    const data = await post('/recipes/import-text', { text });
-    const n = fillRecipeForm(data);
-    toast(`✅ ${n} ingrediënten ingelezen — controleer en sla op`, 'success');
-    $('#recipe-form-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    $('#text-import-panel').style.display = 'none';
-    $('#text-import-area').value = '';
-  } catch (e) {
-    toast('Tekst importeren mislukt: ' + e.message, 'error');
-  } finally {
-    hideImportLoader();
-  }
-}
-
-// ── URL import ────────────────────────────────────────────────────
-
-async function importUrl() {
-  const url = $('#url-import-input').value.trim();
-  if (!url) { toast('Voer een URL in', 'error'); return; }
-
-  showImportLoader('URL ophalen…', 'Receptpagina analyseren');
-  try {
-    const data = await post('/recipes/import-url', { url });
-    const n = fillRecipeForm(data);
-    toast(`✅ ${n} ingrediënten ingelezen — controleer en sla op`, 'success');
-    $('#recipe-form-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    $('#url-import-panel').style.display = 'none';
-    $('#url-import-input').value = '';
-  } catch (e) {
-    toast('URL importeren mislukt: ' + e.message, 'error');
-  } finally {
-    hideImportLoader();
-  }
-}
+// (Old importText / importUrl removed — replaced by collector)
 
 // ════════════════════════════════════════════════════════════════
 // TAB 2 – NIEUWE LIJST
@@ -1646,71 +1733,68 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Import dropdown toggle
-  $('#btn-import-dropdown').addEventListener('click', e => {
-    e.stopPropagation();
-    toggleImportDropdown();
-  });
-  // Close dropdown when clicking elsewhere
-  document.addEventListener('click', () => closeImportDropdown());
+  // ── Collector (unified import) ──────────────────────────────────
+  $('#btn-open-collector').addEventListener('click', openCollector);
+  $('#btn-close-collector').addEventListener('click', closeCollector);
 
-  // Dropdown menu items
-  $('#menu-import-foto').addEventListener('click', () => {
-    closeImportDropdown();
-    $('#foto-input').click();
+  // Add photos
+  $('#btn-collector-add-photo').addEventListener('click', () => {
+    $('#collector-photo-input').click();
   });
-  $('#menu-import-batch').addEventListener('click', () => {
-    closeImportDropdown();
-    $('#batch-input').click();
-  });
-  $('#menu-import-tekst').addEventListener('click', () => {
-    closeImportDropdown();
-    $('#text-import-panel').style.display = 'block';
-    $('#text-import-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    $('#text-import-area').focus();
-  });
-  $('#menu-import-url').addEventListener('click', () => {
-    closeImportDropdown();
-    $('#url-import-panel').style.display = 'block';
-    $('#url-import-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    $('#url-import-input').focus();
+  $('#collector-photo-input').addEventListener('change', e => {
+    addCollectorPhotos(Array.from(e.target.files));
+    e.target.value = '';
   });
 
-  // Single photo import
-  $('#foto-input').addEventListener('change', e => {
-    const file = e.target.files[0];
-    if (file) importRecipePhoto(file);
+  // Add text
+  $('#btn-collector-add-text').addEventListener('click', () => {
+    const el = $('#collector-text-input');
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    if (el.style.display === 'block') $('#collector-text-area').focus();
+  });
+  $('#btn-collector-confirm-text').addEventListener('click', () => {
+    addCollectorText($('#collector-text-area').value);
+    $('#collector-text-area').value = '';
+    $('#collector-text-input').style.display = 'none';
+  });
+  $('#collector-text-area').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.ctrlKey) {
+      addCollectorText($('#collector-text-area').value);
+      $('#collector-text-area').value = '';
+      $('#collector-text-input').style.display = 'none';
+    }
   });
 
-  // Batch import
-  $('#batch-input').addEventListener('change', e => {
-    const files = Array.from(e.target.files);
-    if (files.length) startBatchImport(files);
+  // Add URL
+  $('#btn-collector-add-url').addEventListener('click', () => {
+    const el = $('#collector-url-input');
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    if (el.style.display === 'block') $('#collector-url-field').focus();
   });
+  $('#btn-collector-confirm-url').addEventListener('click', () => {
+    addCollectorUrl($('#collector-url-field').value);
+    $('#collector-url-field').value = '';
+    $('#collector-url-input').style.display = 'none';
+  });
+  $('#collector-url-field').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      addCollectorUrl($('#collector-url-field').value);
+      $('#collector-url-field').value = '';
+      $('#collector-url-input').style.display = 'none';
+    }
+  });
+
+  // Process & clear
+  $('#btn-collector-process').addEventListener('click', processCollector);
+  $('#btn-collector-clear').addEventListener('click', clearCollector);
+
+  // Batch panel (still used for batch mode)
   $('#btn-stop-batch').addEventListener('click', () => {
     batchCancelled = true;
     toast('Batch gestopt', 'info');
   });
   $('#btn-close-batch-panel').addEventListener('click', () => {
     $('#batch-panel').style.display = 'none';
-  });
-
-  // Text import
-  $('#btn-import-text').addEventListener('click', importText);
-  $('#btn-close-text-panel').addEventListener('click', () => {
-    $('#text-import-panel').style.display = 'none';
-  });
-  $('#text-import-area').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && e.ctrlKey) importText();
-  });
-
-  // URL import
-  $('#btn-import-url').addEventListener('click', importUrl);
-  $('#btn-close-url-panel').addEventListener('click', () => {
-    $('#url-import-panel').style.display = 'none';
-  });
-  $('#url-import-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') importUrl();
   });
 
   // ── Tab 2 – Nieuwe lijst ─────────────────────────────────────
