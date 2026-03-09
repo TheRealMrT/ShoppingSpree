@@ -686,11 +686,11 @@ async def import_recipe_photo(file: UploadFile = File(...)):
         raise HTTPException(status_code=422, detail="Kon geen tekst lezen op de foto.")
     logger.info("OCR extracted %d chars of text", len(ocr_text))
 
-    # Step 2: Text model (qwen3.5) does full structured extraction
+    # Step 2: Thinking model (qwen3.5) does full structured extraction
     #   OCR text is messy (titles, page numbers, sentences mixed in)
-    #   — the text LLM understands context and can separate them properly
+    #   — the thinking LLM reasons through context and preserves exact values
     prompt = TEXT_IMPORT_PROMPT + ocr_text[:8000]
-    raw = await _call_ollama_text(prompt)
+    raw = await _call_ollama_text(prompt, model=THINKING_MODEL)
     result = _parse_recipe_json(raw)
 
     # Step 3: Try to extract dish photo from the cookbook page
@@ -888,6 +888,11 @@ async def import_recipe_unified(
             detail="Kon geen bruikbare tekst vinden in de aangeleverde bronnen.",
         )
 
+    # Use the thinking model when photos are involved (OCR text is messy)
+    # Use the fast extraction model for pure text/URL (cleaner input)
+    has_photos = bool(photos) and bool(photo_data)
+    extraction_model = THINKING_MODEL if has_photos else None  # None = default EXTRACTION_MODEL
+
     if jsonld_recipe and not collected_texts:
         # Pure JSON-LD — return as-is
         result = jsonld_recipe
@@ -900,14 +905,14 @@ async def import_recipe_unified(
             f"Onderstaande tekst bevat mogelijk aanvullende of betere informatie. "
             f"Combineer alles tot één compleet recept.\n\n"
         )
-        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + hint + combined[:8000])
+        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + hint + combined[:8000], model=extraction_model)
         result = _parse_recipe_json(raw)
         if not result.get("bron") and url:
             result["bron"] = url
     else:
         # No JSON-LD — pure text extraction
         combined = "\n\n".join(collected_texts)
-        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + combined[:8000])
+        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + combined[:8000], model=extraction_model)
         result = _parse_recipe_json(raw)
         if url and not result.get("bron"):
             result["bron"] = url
