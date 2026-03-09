@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🛒 Boodschappen</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="header-top">
+      <h1>🛒 Boodschappen</h1>
+      <button id="btn-notif" class="btn-notif" title="Meldingen bekijken">
+        🔔 <span class="notif-badge" id="notif-badge">0</span>
+      </button>
+    </div>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="recepten">Recepten</button>
+      <button class="tab-btn" data-tab="nieuwe-lijst">Nieuwe lijst</button>
+      <button class="tab-btn" data-tab="lijsten">Lijsten</button>
+      <button class="tab-btn" data-tab="vaste-artikelen">Vaste artikelen</button>
+      <button class="tab-btn" data-tab="familie">👨‍👩‍👧 Familie</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ===================== TAB 1: RECEPTEN ===================== -->
+    <div id="tab-recepten" class="tab-content active">
+      <div class="section-header">
+        <h2>Recepten</h2>
+        <div style="display:flex;gap:.4rem;align-items:center">
+          <!-- Import dropdown -->
+          <div class="import-dropdown" id="import-dropdown">
+            <button class="btn btn-outline btn-sm" id="btn-import-dropdown">📥 Importeren ▾</button>
+            <div class="import-dropdown-menu" id="import-dropdown-menu">
+              <button class="import-menu-item" id="menu-import-foto">📷 Foto (enkel)</button>
+              <button class="import-menu-item" id="menu-import-batch">📁 Batch (meerdere foto's)</button>
+              <button class="import-menu-item" id="menu-import-tekst">📝 Tekst plakken</button>
+              <button class="import-menu-item" id="menu-import-url">🔗 URL importeren</button>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" id="btn-nieuw-recept">+ Nieuw recept</button>
+        </div>
+      </div>
+
+      <!-- Hidden file inputs -->
+      <input type="file" id="foto-input"  accept="image/*" capture="environment" style="display:none">
+      <input type="file" id="batch-input" accept="image/*" multiple style="display:none">
+
+      <!-- Text import panel -->
+      <div id="text-import-panel" class="import-panel" style="display:none">
+        <div class="import-panel-header">
+          <strong>📝 Tekst importeren</strong>
+          <button class="btn-icon" id="btn-close-text-panel">✕</button>
+        </div>
+        <div class="form-group">
+          <label for="text-import-area">Plak je recept hieronder</label>
+          <textarea id="text-import-area" rows="6" placeholder="Kopieer het recept en plak hier (bijv. uit een Word-document, e-mail of boek)…"></textarea>
+        </div>
+        <button class="btn btn-primary btn-sm" id="btn-import-text">Importeer recept</button>
+      </div>
+
+      <!-- URL import panel -->
+      <div id="url-import-panel" class="import-panel" style="display:none">
+        <div class="import-panel-header">
+          <strong>🔗 URL importeren</strong>
+          <button class="btn-icon" id="btn-close-url-panel">✕</button>
+        </div>
+        <div class="form-group">
+          <label for="url-import-input">Receptpagina URL</label>
+          <input type="url" id="url-import-input" placeholder="https://www.allerhande.nl/recept/…">
+        </div>
+        <button class="btn btn-primary btn-sm" id="btn-import-url">Importeer recept</button>
+      </div>
+
+      <!-- Batch progress panel -->
+      <div id="batch-panel" class="import-panel" style="display:none">
+        <div class="import-panel-header">
+          <strong>📁 Batch importeren</strong>
+          <button class="btn-icon" id="btn-close-batch-panel">✕</button>
+        </div>
+        <p id="batch-status" style="font-size:.85rem;color:var(--text-muted)">Gereed…</p>
+        <div class="batch-progress-bar-outer">
+          <div class="batch-progress-bar-inner" id="batch-progress-bar" style="width:0%"></div>
+        </div>
+        <div class="batch-file-list" id="batch-file-list"></div>
+        <button class="btn btn-danger btn-sm" id="btn-stop-batch" style="margin-top:.5rem;display:none">⏹ Stop</button>
+      </div>
+
+      <!-- Add/Edit recipe form (hidden by default) -->
+      <div id="recipe-form-card" class="card" style="display:none">
+        <h3 id="recipe-form-title" style="margin-bottom:.75rem;font-size:1rem;font-weight:700;color:var(--green)">Nieuw recept</h3>
+        <form id="recipe-form">
+          <input type="hidden" id="recipe-id">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="recipe-name">Naam *</label>
+              <input type="text" id="recipe-name" placeholder="Naam van het recept" required>
+            </div>
+            <div class="form-group" style="max-width:120px">
+              <label for="recipe-servings">Porties</label>
+              <input type="number" id="recipe-servings" value="4" min="1" max="20">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="recipe-source">Bron</label>
+            <input type="text" id="recipe-source" placeholder="bijv. Allerhande, cookbook: Ottolenghi p.42">
+          </div>
+          <div class="form-group">
+            <label>Tags</label>
+            <div id="recipe-tag-picker" class="tag-picker"></div>
+          </div>
+          <div class="form-group" style="max-width:200px">
+            <label for="recipe-prep-time">Bereidingstijd (minuten)</label>
+            <input type="number" id="recipe-prep-time" placeholder="bijv. 30" min="0" max="480">
+          </div>
+          <div class="form-group">
+            <label for="recipe-steps">Bereidingswijze</label>
+            <textarea id="recipe-steps" rows="4" placeholder="Stap-voor-stap…"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="recipe-notes">Notities</label>
+            <textarea id="recipe-notes" rows="2" placeholder="Tips, variaties…"></textarea>
+          </div>
+
+          <!-- Recipe photo -->
+          <div class="form-group" id="recipe-photo-group">
+            <label>Foto (optioneel)</label>
+            <div id="recipe-photo-preview" class="recipe-photo-preview" style="display:none">
+              <img id="recipe-photo-img" alt="Receptfoto">
+              <div>
+                <p style="font-size:.8rem;color:var(--green);font-weight:600;margin-bottom:.3rem">Foto opgeslagen</p>
+                <button type="button" class="btn btn-danger btn-sm" id="btn-remove-photo">🗑 Verwijderen</button>
+              </div>
+            </div>
+            <input type="file" id="recipe-photo-file" accept="image/*" style="margin-top:.25rem">
+            <p style="font-size:.75rem;color:var(--text-muted);margin-top:.2rem">Foto toevoegen of vervangen</p>
+          </div>
+
+          <!-- Ingredients -->
+          <hr class="divider">
+          <div class="section-header" style="margin-bottom:.5rem">
+            <strong style="font-size:.95rem">Ingrediënten</strong>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-add-ing-row">+ Rij</button>
+          </div>
+          <div style="font-size:.75rem;color:var(--text-muted);display:grid;grid-template-columns:2fr 1fr 1fr 2fr auto;gap:.5rem;padding:0 .1rem .35rem">
+            <span>Naam</span><span>Hoeveelheid</span><span>Eenheid</span><span>Categorie</span><span></span>
+          </div>
+          <div id="ing-rows-container"></div>
+
+          <div style="display:flex;gap:.5rem;margin-top:1rem">
+            <button type="submit" class="btn btn-primary">Opslaan</button>
+            <button type="button" class="btn btn-secondary" id="btn-cancel-recipe">Annuleren</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="recipe-filter-bar" id="recipe-filter-bar">
+        <div class="recipe-filter-top">
+          <input type="text" id="filter-search" placeholder="🔍 Zoeken op naam…">
+          <select id="filter-prep-time" title="Max bereidingstijd">
+            <option value="0">⏱ Alle tijden</option>
+            <option value="15">≤ 15 min</option>
+            <option value="30">≤ 30 min</option>
+            <option value="45">≤ 45 min</option>
+            <option value="60">≤ 60 min</option>
+          </select>
+          <button class="btn btn-sm btn-outline" id="btn-reset-filter" title="Filter wissen">✕ Reset</button>
+        </div>
+        <div class="filter-tag-row" id="filter-tag-row"></div>
+      </div>
+
+      <!-- Recipe list -->
+      <div id="recipe-list"></div>
+    </div>
+
+    <!-- ===================== TAB 2: NIEUWE LIJST ===================== -->
+    <div id="tab-nieuwe-lijst" class="tab-content">
+      <div class="section-header">
+        <h2 id="nieuw-lijst-title">Nieuwe lijst</h2>
+        <button class="btn btn-secondary btn-sm" id="btn-reset-lijst">Leegmaken</button>
+      </div>
+
+      <div class="card">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="lijst-name">Naam *</label>
+            <input type="text" id="lijst-name" placeholder="bijv. Week 14">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="lijst-datefrom">Van</label>
+            <input type="date" id="lijst-datefrom">
+          </div>
+          <div class="form-group">
+            <label for="lijst-dateto">Tot</label>
+            <input type="date" id="lijst-dateto">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="lijst-notes">Notities</label>
+          <input type="text" id="lijst-notes" placeholder="Optionele notitie">
+        </div>
+      </div>
+
+      <!-- Recipe selector -->
+      <div class="card">
+        <strong style="display:block;margin-bottom:.6rem;font-size:.95rem">Recepten toevoegen</strong>
+        <div class="recipe-selector">
+          <div class="form-group">
+            <label for="recipe-select">Recept</label>
+            <select id="recipe-select"></select>
+          </div>
+          <div class="form-group" style="max-width:90px">
+            <label for="recipe-portions">Porties</label>
+            <input type="number" id="recipe-portions" value="4" min="1" max="20">
+          </div>
+          <button type="button" class="btn btn-secondary" style="margin-bottom:.85rem" id="btn-add-recipe-to-list">+ Toevoegen</button>
+        </div>
+        <div id="selected-recipes-list"></div>
+      </div>
+
+      <!-- Action buttons -->
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem">
+        <button type="button" class="btn btn-outline" id="btn-voeg-standaard-toe">⭐ Vaste artikelen</button>
+        <button type="button" class="btn btn-outline" id="btn-genereer-lijst">↻ Ververs items</button>
+      </div>
+
+      <!-- Items grouped by category -->
+      <div id="lijst-items-preview"></div>
+
+      <!-- Manual add item -->
+      <div class="card" style="margin-top:.75rem">
+        <strong style="display:block;margin-bottom:.6rem;font-size:.95rem">Extra artikel toevoegen</strong>
+        <div style="display:grid;grid-template-columns:2fr 0.8fr 0.8fr 1.2fr auto;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
+          <div class="form-group" style="margin:0">
+            <label>Naam</label>
+            <input type="text" id="extra-name" placeholder="Artikel">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Hoeveel</label>
+            <input type="number" id="extra-amount" placeholder="2" step="any">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Eenheid</label>
+            <input type="text" id="extra-unit" placeholder="liter">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Categorie</label>
+            <select id="extra-category"></select>
+          </div>
+          <button type="button" class="btn btn-secondary" style="margin-bottom:.05rem" id="btn-add-extra">+</button>
+        </div>
+        <div class="form-row" style="margin-top:.5rem">
+          <div class="form-group">
+            <label>Supermarkt</label>
+            <select id="extra-supermarket">
+              <option value="beide">Beide</option>
+              <option value="aldi">Aldi</option>
+              <option value="jumbo">Jumbo</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <input type="hidden" id="editing-list-id">
+      <div style="display:flex;gap:.5rem;margin-top:1rem;flex-wrap:wrap">
+        <button type="button" class="btn btn-primary" id="btn-save-lijst">💾 Opslaan</button>
+        <button type="button" class="btn btn-secondary" id="btn-cancel-lijst" style="display:none">Annuleren</button>
+      </div>
+    </div>
+
+    <!-- ===================== TAB 3: LIJSTEN ===================== -->
+    <div id="tab-lijsten" class="tab-content">
+      <div class="section-header">
+        <h2>Lijsten</h2>
+      </div>
+      <div id="lists-overview"></div>
+
+      <!-- GitHub config (collapsible) -->
+      <div class="settings-section">
+        <button class="settings-toggle" id="settings-toggle">⚙️ GitHub Pages configuratie <span class="chevron">▶</span></button>
+        <div class="settings-body" id="settings-body">
+          <div class="form-group">
+            <label for="cfg-token">GitHub Token (Personal Access Token)</label>
+            <input type="password" id="cfg-token" placeholder="ghp_…">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cfg-owner">Repository owner</label>
+              <input type="text" id="cfg-owner" placeholder="username">
+            </div>
+            <div class="form-group">
+              <label for="cfg-repo">Repository naam</label>
+              <input type="text" id="cfg-repo" placeholder="mijn-repo">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="cfg-filepath">Bestandspad in repo</label>
+            <input type="text" id="cfg-filepath" placeholder="boodschappen.html">
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-save-config">Configuratie opslaan</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== TAB 4: VASTE ARTIKELEN ===================== -->
+    <div id="tab-vaste-artikelen" class="tab-content">
+      <div class="section-header">
+        <h2>Vaste artikelen</h2>
+        <button class="btn btn-primary btn-sm" id="btn-nieuw-staple">+ Nieuw artikel</button>
+      </div>
+
+      <!-- Add/Edit staple form -->
+      <div id="staple-form-card" class="card" style="display:none">
+        <h3 id="staple-form-title" style="margin-bottom:.75rem;font-size:1rem;font-weight:700;color:var(--green)">Nieuw artikel</h3>
+        <form id="staple-form">
+          <input type="hidden" id="staple-id">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="staple-name">Naam *</label>
+              <input type="text" id="staple-name" placeholder="bijv. Melk" required>
+            </div>
+            <div class="form-group" style="max-width:90px">
+              <label for="staple-amount">Hoeveel</label>
+              <input type="number" id="staple-amount" placeholder="2" step="any">
+            </div>
+            <div class="form-group" style="max-width:90px">
+              <label for="staple-unit">Eenheid</label>
+              <input type="text" id="staple-unit" placeholder="liter">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="staple-category">Categorie</label>
+              <select id="staple-category"></select>
+            </div>
+            <div class="form-group">
+              <label for="staple-supermarket">Supermarkt</label>
+              <select id="staple-supermarket">
+                <option value="beide">Beide</option>
+                <option value="aldi">Aldi</option>
+                <option value="jumbo">Jumbo</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="staple-notes">Notities</label>
+            <input type="text" id="staple-notes" placeholder="Optioneel">
+          </div>
+          <div style="display:flex;gap:.5rem">
+            <button type="submit" class="btn btn-primary btn-sm">Opslaan</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-staple">Annuleren</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Staple items list -->
+      <div id="staple-list"></div>
+    </div>
+
+    <!-- ===================== TAB 5: FAMILIE ===================== -->
+    <div id="tab-familie" class="tab-content">
+      <div class="section-header">
+        <h2>Gezin &amp; Voorkeuren</h2>
+        <button class="btn btn-primary btn-sm" id="btn-nieuw-lid">+ Gezinslid</button>
+      </div>
+
+      <!-- Add/Edit family member form -->
+      <div id="familie-form-card" class="card" style="display:none">
+        <h3 id="familie-form-title" style="margin-bottom:.75rem;font-size:1rem;font-weight:700;color:var(--green)">Nieuw gezinslid</h3>
+        <form id="familie-form">
+          <input type="hidden" id="familie-id">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="familie-name">Naam *</label>
+              <input type="text" id="familie-name" placeholder="Voornaam" required>
+            </div>
+            <div class="form-group" style="max-width:165px">
+              <label for="familie-birthdate">Geboortedatum</label>
+              <input type="date" id="familie-birthdate">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="familie-dietary">Dieetwensen (kommagescheiden)</label>
+            <input type="text" id="familie-dietary" placeholder="bijv. vegetarisch, lactosevrij">
+          </div>
+          <div class="form-group">
+            <label for="familie-allergies">Allergieën (kommagescheiden)</label>
+            <input type="text" id="familie-allergies" placeholder="bijv. noten, gluten, schaaldieren">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="familie-likes">Houdt van</label>
+              <input type="text" id="familie-likes" placeholder="bijv. pasta, Aziatisch">
+            </div>
+            <div class="form-group">
+              <label for="familie-dislikes">Niet van</label>
+              <input type="text" id="familie-dislikes" placeholder="bijv. spruitjes">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="familie-notes">Notities</label>
+            <textarea id="familie-notes" rows="2" placeholder="Extra informatie…"></textarea>
+          </div>
+          <div style="display:flex;gap:.5rem">
+            <button type="submit" class="btn btn-primary btn-sm">Opslaan</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-lid">Annuleren</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Family member list -->
+      <div id="familie-list"></div>
+    </div>
+  </main>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- Notification log panel -->
+<div id="notif-panel">
+  <div class="notif-panel-header">
+    <strong>🔔 Meldingen</strong>
+    <div style="display:flex;gap:.25rem">
+      <button id="btn-clear-notif" title="Alles wissen">🗑 Wissen</button>
+      <button id="btn-close-notif" title="Sluiten">✕</button>
+    </div>
+  </div>
+  <div id="notif-list">
+    <p style="padding:.75rem;color:var(--text-muted);font-size:.85rem">Nog geen meldingen.</p>
+  </div>
+</div>
+
+<!-- Chat floating action button -->
+<button id="chat-fab" title="Kookassistent openen">💬</button>
+
+<!-- Chat panel -->
+<div id="chat-panel">
+  <div class="chat-header">
+    <strong>🍳 Kookassistent</strong>
+    <button class="btn-icon" id="btn-close-chat" style="color:white;font-size:1.1rem;padding:.2rem">✕</button>
+  </div>
+  <div class="chat-context-bar" id="chat-context-bar"></div>
+  <div class="chat-messages" id="chat-messages">
+    <div class="chat-bubble assistant">Hoi! Ik ben je kookassistent. Vraag me gerust iets over recepten, maaltijdplanning of kooktips!</div>
+  </div>
+  <div class="chat-input-row">
+    <input type="text" id="chat-input" placeholder="Stel een vraag…" autocomplete="off">
+    <button class="chat-send-btn" id="btn-chat-send" title="Verstuur">➤</button>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
