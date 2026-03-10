@@ -87,11 +87,12 @@ _JSON_RULES = f"""\
   (bijv. als er "250 g" staat, schrijf 250, NIET 200)
 - Verzin GEEN ingrediënten die niet in de brontekst staan
 - hoeveelheid moet een getal zijn of null (nooit tekst zoals "twee"). Breuken als decimaal: 1/2 → 0.5, 3/4 → 0.75
-- eenheid is de maateenheid (g, ml, el, tl, stuks, takjes, snufje, etc.) of null
+- Als een ingrediënt een stuksaanduiding heeft (bijv. "1 winterpeen", "2 uien", "1 pakje boemboe"), gebruik het getal als hoeveelheid en "stuk"/"stuks"/"pakje" als eenheid
+- eenheid is de maateenheid (g, ml, el, tl, stuk, stuks, pakje, takjes, snufje, etc.) of null
 - Als het recept in een andere taal staat, vertaal naar het Nederlands
 - Geef alle ingrediënten die je kunt lezen, ook als hoeveelheid ontbreekt
 - porties is een geheel getal of null als niet vermeld
-- bereidingstijd is het totaal aantal minuten (voorbereiding + kooktijd), geheel getal of null
+- bereidingstijd: zoek ACTIEF naar tijdsaanduidingen in de tekst (bijv. "20 min", "bereidingstijd: 45 minuten", "Totaal: 1 uur"). Geef het totaal aantal minuten als geheel getal, of null als nergens vermeld
 - tags is een JSON-lijst met maximaal 5 tags die van toepassing zijn, kies uitsluitend uit: {_TAGS_LIST}
 - Geef GEEN markdown code blocks, alleen pure JSON"""
 
