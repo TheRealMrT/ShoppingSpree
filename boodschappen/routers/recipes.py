@@ -92,7 +92,10 @@ _JSON_RULES = f"""\
 - Als het recept in een andere taal staat, vertaal naar het Nederlands
 - Geef alle ingrediënten die je kunt lezen, ook als hoeveelheid ontbreekt
 - porties is een geheel getal of null als niet vermeld
-- bereidingstijd: zoek ACTIEF naar tijdsaanduidingen in de tekst (bijv. "20 min", "bereidingstijd: 45 minuten", "Totaal: 1 uur"). Geef het totaal aantal minuten als geheel getal, of null als nergens vermeld
+- bereidingstijd: zoek ACTIEF naar een tijdsaanduiding in de tekst. Kijk vooral naar:
+  * Losse tijdsaanduidingen: "20 min", "⏱ 20 min", "Bereidingstijd: 45 minuten", "Totaal: 1 uur"
+  * Als er geen expliciete totaaltijd staat maar wel tijden in de stappen (bijv. "bak 4 minuten", "kook 8 minuten"), tel deze op
+  Geef het totaal aantal minuten als geheel getal. Geef null ALLEEN als er echt nergens een tijd te vinden is
 - tags is een JSON-lijst met maximaal 5 tags die van toepassing zijn, kies uitsluitend uit: {_TAGS_LIST}
 - Geef GEEN markdown code blocks, alleen pure JSON"""
 
@@ -127,7 +130,9 @@ _RECIPE_JSON_SCHEMA = {
 PHOTO_OCR_PROMPT = (
     "Lees ALLE tekst op deze foto van een receptpagina. "
     "Geef de volledige tekst terug — titel, ingrediënten, bereidingsstappen, "
-    "porties, alles wat je kunt lezen. Gewone platte tekst, geen JSON, geen markdown.\n"
+    "porties, bereidingstijd (bijv. '20 min', '45 minuten'), en alles wat je kunt lezen. "
+    "LET OP: bereidingstijd staat vaak klein bovenaan of naast de titel met een klokicoon. "
+    "Gewone platte tekst, geen JSON, geen markdown.\n"
     "Bewaar de originele regelafbrekingen en structuur."
 )
 
