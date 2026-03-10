@@ -814,7 +814,7 @@ async function processCollector() {
       method: 'POST',
       body: formData,
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
 
     const n = fillRecipeForm(data);
@@ -881,7 +881,7 @@ async function startBatchImport(files) {
       const formData = new FormData();
       formData.append('file', file);
       const res = await fetch(`${API}/recipes/import-photo`, { method: 'POST', body: formData });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
 
       // Auto-save

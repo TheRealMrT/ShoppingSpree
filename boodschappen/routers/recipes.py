@@ -81,14 +81,46 @@ _JSON_SCHEMA = """\
 _TAGS_LIST = ", ".join(_AVAILABLE_TAGS)
 
 _JSON_RULES = f"""\
+- KOPIEER ingrediëntnamen EXACT zoals ze in de tekst staan — NIET vertalen, NIET hernoemen, NIET samenvatten
+  (bijv. "eiermie" blijft "eiermie", NIET "noedels"; "sperziebonen" blijft "sperziebonen", NIET "groene bonen")
+- KOPIEER hoeveelheden EXACT zoals vermeld — NIET afronden, NIET schatten, NIET veranderen
+  (bijv. als er "250 g" staat, schrijf 250, NIET 200)
+- Verzin GEEN ingrediënten die niet in de brontekst staan
 - hoeveelheid moet een getal zijn of null (nooit tekst zoals "twee"). Breuken als decimaal: 1/2 → 0.5, 3/4 → 0.75
-- eenheid is de maateenheid (gr, ml, el, tl, stuks, takjes, snufje, etc.) of null
+- eenheid is de maateenheid (g, ml, el, tl, stuks, takjes, snufje, etc.) of null
 - Als het recept in een andere taal staat, vertaal naar het Nederlands
 - Geef alle ingrediënten die je kunt lezen, ook als hoeveelheid ontbreekt
 - porties is een geheel getal of null als niet vermeld
 - bereidingstijd is het totaal aantal minuten (voorbereiding + kooktijd), geheel getal of null
 - tags is een JSON-lijst met maximaal 5 tags die van toepassing zijn, kies uitsluitend uit: {_TAGS_LIST}
 - Geef GEEN markdown code blocks, alleen pure JSON"""
+
+# Ollama structured output schema — enforces valid JSON output at token level
+_RECIPE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "naam":            {"type": "string"},
+        "bron":            {"type": ["string", "null"]},
+        "porties":         {"type": ["integer", "null"]},
+        "bereidingstijd":  {"type": ["integer", "null"]},
+        "tags":            {"type": "array", "items": {"type": "string"}},
+        "ingredienten": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "naam":         {"type": "string"},
+                    "hoeveelheid":  {"type": ["number", "null"]},
+                    "eenheid":      {"type": ["string", "null"]},
+                },
+                "required": ["naam", "hoeveelheid", "eenheid"],
+            },
+        },
+        "stappen":  {"type": ["string", "null"]},
+        "notities": {"type": ["string", "null"]},
+    },
+    "required": ["naam", "ingredienten"],
+}
 
 # Two-step photo import: vision model does OCR only, text LLM does structured extraction
 PHOTO_OCR_PROMPT = (
@@ -214,19 +246,36 @@ def _parse_recipe_json(raw: str) -> dict:
     return data
 
 
-async def _call_ollama_text(prompt: str, model: str = None) -> str:
-    """Call Ollama with a plain-text prompt and return raw response content."""
+async def _call_ollama_text(
+    prompt: str,
+    model: str = None,
+    json_schema: dict = None,
+    temperature: float = None,
+) -> str:
+    """Call Ollama with a plain-text prompt and return raw response content.
+
+    If json_schema is provided, Ollama enforces the output to match the schema
+    (structured output mode — the model CANNOT produce invalid JSON).
+    """
     model = model or EXTRACTION_MODEL
-    logger.info("Calling Ollama text model '%s' (prompt length: %d chars)", model, len(prompt))
+    logger.info("Calling Ollama text model '%s' (prompt length: %d chars, structured: %s)",
+                model, len(prompt), bool(json_schema))
+
+    payload: dict = {
+        "model": model,
+        "stream": False,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if json_schema:
+        payload["format"] = json_schema
+    if temperature is not None:
+        payload.setdefault("options", {})["temperature"] = temperature
+
     try:
         async with httpx.AsyncClient(timeout=600) as client:   # 10-minute timeout (model may need to load)
             resp = await client.post(
                 f"{OLLAMA_BASE}/api/chat",
-                json={
-                    "model": model,
-                    "stream": False,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
+                json=payload,
             )
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Ollama niet bereikbaar.")
@@ -245,6 +294,8 @@ async def _call_ollama_text(prompt: str, model: str = None) -> str:
         raise HTTPException(status_code=502, detail=f"Ollama fout {resp.status_code}")
 
     content = resp.json().get("message", {}).get("content", "")
+    # Strip thinking blocks — safety net in case a thinking model is used
+    content = re.sub(r"<think>[\s\S]*?</think>", "", content).strip()
     logger.debug("Ollama response (%d chars): %s…", len(content), content[:200])
     return content
 
@@ -686,11 +737,9 @@ async def import_recipe_photo(file: UploadFile = File(...)):
         raise HTTPException(status_code=422, detail="Kon geen tekst lezen op de foto.")
     logger.info("OCR extracted %d chars of text", len(ocr_text))
 
-    # Step 2: Thinking model (qwen3.5) does full structured extraction
-    #   OCR text is messy (titles, page numbers, sentences mixed in)
-    #   — the thinking LLM reasons through context and preserves exact values
+    # Step 2: Extraction model does structured extraction (schema-enforced)
     prompt = TEXT_IMPORT_PROMPT + ocr_text[:8000]
-    raw = await _call_ollama_text(prompt, model=THINKING_MODEL)
+    raw = await _call_ollama_text(prompt, json_schema=_RECIPE_JSON_SCHEMA, temperature=0)
     result = _parse_recipe_json(raw)
 
     # Step 3: Try to extract dish photo from the cookbook page
@@ -711,7 +760,7 @@ async def import_recipe_text(data: TextImportRequest):
         raise HTTPException(status_code=400, detail="Lege tekst ontvangen.")
 
     prompt = TEXT_IMPORT_PROMPT + data.text[:8000]
-    raw = await _call_ollama_text(prompt)
+    raw = await _call_ollama_text(prompt, json_schema=_RECIPE_JSON_SCHEMA, temperature=0)
     return _parse_recipe_json(raw)
 
 
@@ -766,7 +815,7 @@ async def import_recipe_url(data: UrlImportRequest):
             detail=_SPA_WARNING,
         )
 
-    raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + clean[:6000])
+    raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + clean[:6000], json_schema=_RECIPE_JSON_SCHEMA, temperature=0)
     result = _parse_recipe_json(raw)
     if not result.get("bron"):
         result["bron"] = url
@@ -888,11 +937,6 @@ async def import_recipe_unified(
             detail="Kon geen bruikbare tekst vinden in de aangeleverde bronnen.",
         )
 
-    # Use the thinking model when photos are involved (OCR text is messy)
-    # Use the fast extraction model for pure text/URL (cleaner input)
-    has_photos = bool(photos) and bool(photo_data)
-    extraction_model = THINKING_MODEL if has_photos else None  # None = default EXTRACTION_MODEL
-
     if jsonld_recipe and not collected_texts:
         # Pure JSON-LD — return as-is
         result = jsonld_recipe
@@ -905,14 +949,16 @@ async def import_recipe_unified(
             f"Onderstaande tekst bevat mogelijk aanvullende of betere informatie. "
             f"Combineer alles tot één compleet recept.\n\n"
         )
-        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + hint + combined[:8000], model=extraction_model)
+        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + hint + combined[:8000],
+                                     json_schema=_RECIPE_JSON_SCHEMA, temperature=0)
         result = _parse_recipe_json(raw)
         if not result.get("bron") and url:
             result["bron"] = url
     else:
         # No JSON-LD — pure text extraction
         combined = "\n\n".join(collected_texts)
-        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + combined[:8000], model=extraction_model)
+        raw = await _call_ollama_text(TEXT_IMPORT_PROMPT + combined[:8000],
+                                     json_schema=_RECIPE_JSON_SCHEMA, temperature=0)
         result = _parse_recipe_json(raw)
         if url and not result.get("bron"):
             result["bron"] = url
