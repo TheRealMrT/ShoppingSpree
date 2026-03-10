@@ -727,6 +727,49 @@ function clearCollector() {
   renderCollectorItems();
 }
 
+function handleCollectorPaste(e) {
+  // Only handle when collector is open
+  if ($('#collector-panel').style.display === 'none') return;
+  // Don't intercept paste inside text/URL inputs (let native paste work)
+  const active = document.activeElement;
+  if (active && (active.id === 'collector-text-area' || active.id === 'collector-url-field')) return;
+
+  const items = e.clipboardData?.items;
+  if (!items) return;
+
+  let handled = false;
+
+  // Check for images first
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        addCollectorPhotos([file]);
+        handled = true;
+      }
+    }
+  }
+
+  // If no image was found, check for text
+  if (!handled) {
+    const text = e.clipboardData.getData('text/plain');
+    if (text && text.trim()) {
+      // Detect if it looks like a URL
+      if (/^https?:\/\/\S+$/i.test(text.trim())) {
+        addCollectorUrl(text.trim());
+      } else {
+        addCollectorText(text);
+      }
+      handled = true;
+    }
+  }
+
+  if (handled) {
+    e.preventDefault();
+    toast('Geplakt in collector', 'success');
+  }
+}
+
 function renderCollectorItems() {
   const container = $('#collector-items');
   const items = state.collector.items;
@@ -1787,6 +1830,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Process & clear
   $('#btn-collector-process').addEventListener('click', processCollector);
   $('#btn-collector-clear').addEventListener('click', clearCollector);
+
+  // Clipboard paste → add to collector
+  document.addEventListener('paste', handleCollectorPaste);
 
   // Batch panel (still used for batch mode)
   $('#btn-stop-batch').addEventListener('click', () => {

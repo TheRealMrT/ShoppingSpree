@@ -401,6 +401,13 @@ textarea { resize: vertical; min-height: 80px; }
   text-align: center;
   padding: 1rem 0;
 }
+.collector-empty kbd {
+  background: var(--border);
+  border-radius: 3px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
 
 .collector-item {
   display: flex;
